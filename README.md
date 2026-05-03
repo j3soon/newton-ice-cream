@@ -26,3 +26,7 @@ python -m newton.examples
 python -m newton.examples mpm_viscous
 python -m newton.examples mpm_granular
 ```
+
+## Assets
+
+`assets/teaspoon` is created from Blender `Extra Mesh Objects` extension, with configs `Max Resolution: 15`, and applied `Recalculate Normals` afterwards. The object/mesh is also renamed to `Tea Spoon`. More details at: https://projects.blender.org/blender/blender/issues/158101
