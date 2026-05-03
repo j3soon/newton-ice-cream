@@ -1,0 +1,3 @@
+[submodule "newton"]
+	path = newton
+	url = https://github.com/j3soon/newton.git
