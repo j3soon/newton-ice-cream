@@ -70,3 +70,7 @@ code -d ./example_mpm_granular.py ./example_mpm_granular_spoon.py
 python -m newton.examples mpm_viscous
 python -m newton.examples mpm_granular
 ```
+
+### Choice of Simulation Engine
+
+Newton MPM is a promising approach for simulating complex fluids and materials that are difficult to model with existing physics simulators. For example, Omniverse/Isaac Sim/Isaac Lab with the PhysX backend can simulate [soft bodies](https://nvidia-omniverse.github.io/PhysX/physx/5.4.1/docs/SoftBodies.html) and [particle-based fluids](https://docs.omniverse.nvidia.com/kit/docs/omni_physics/latest/dev_guide/particles/particles.html), but it remains challenging to simulate materials that fall in-between these two categories, such as ice cream. See related discussions here: https://github.com/isaac-sim/IsaacLab/issues/2953
