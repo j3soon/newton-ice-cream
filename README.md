@@ -2,6 +2,8 @@
 
 Simulate ice cream in [Newton](https://github.com/newton-physics/newton) with MPM.
 
+> As shown in the preview videos below, the current result is a material that kind of looks like ice cream, but it's not quite there yet. Planning to further tune the material parameters and document their effects in the near future (hopefully).
+
 ## Set up
 
 Clone the repository:
@@ -21,12 +23,33 @@ uv pip install -e "./newton[examples]"
 
 ## Run Example
 
+### Scooping Ice Cream
+
+```sh
+source .venv/bin/activate
+python ./example_mpm_ice_cream_spoon.py
+python ./example_mpm_ice_cream_spoon.py --voxel-size 0.005
+```
+
+https://github.com/user-attachments/assets/297727db-86d2-40fd-a032-9e24c522e2d2
+
+https://github.com/user-attachments/assets/6a320ab1-2690-4fcf-9ea5-e8d812993b21
+
+written with minimal diff:
+
+```sh
+diff ./example_mpm_viscous.py ./example_mpm_ice_cream_spoon.py
+code -d ./example_mpm_viscous.py ./example_mpm_ice_cream_spoon.py
+```
+
 ### Flour on Spoon
 
 ```sh
 source .venv/bin/activate
 python ./example_mpm_granular_spoon.py
 ```
+
+https://github.com/user-attachments/assets/00583488-207c-47bc-b333-9801122c7a34
 
 written with minimal diff:
 
