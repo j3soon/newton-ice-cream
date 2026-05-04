@@ -1,0 +1,335 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 The Newton Developers
+# SPDX-License-Identifier: Apache-2.0
+
+import os
+import warnings
+
+import numpy as np
+import warp as wp
+from pxr import Usd
+
+import newton
+import newton.examples
+import newton.usd
+from newton.solvers import SolverImplicitMPM
+
+
+@wp.kernel
+def _set_spoon_kinematic(
+    body_index: int,
+    z: float,
+    vz: float,
+    body_q: wp.array[wp.transform],
+    body_qd: wp.array[wp.spatial_vector],
+):
+    body_q[body_index] = wp.transform(wp.vec3(0.0, 0.0, z), wp.quat_identity())
+    body_qd[body_index] = wp.spatial_vector(0.0, 0.0, vz, 0.0, 0.0, 0.0)
+
+
+class Example:
+    def __init__(self, viewer, args):
+        # setup simulation parameters first
+        self.fps = args.fps
+        self.frame_dt = 1.0 / self.fps
+
+        # group related attributes by prefix
+        self.sim_time = 0.0
+        self.sim_substeps = args.substeps
+        self.sim_dt = self.frame_dt / self.sim_substeps
+
+        # save a reference to the viewer
+        self.viewer = viewer
+        builder = newton.ModelBuilder()
+
+        # Register MPM custom attributes before adding particles
+        SolverImplicitMPM.register_custom_attributes(builder)
+
+        Example.emit_particles(builder, args)
+
+        # Setup collision geometry
+        self.collider = args.collider
+        if self.collider == "concave":
+            extents = (1.0, 2.0, 0.25)
+            left_xform = wp.transform(
+                wp.vec3(-0.7, 0.0, 0.8), wp.quat_from_axis_angle(wp.vec3(0.0, 1.0, 0.0), np.pi / 4.0)
+            )
+            right_xform = wp.transform(
+                wp.vec3(0.7, 0.0, 0.8), wp.quat_from_axis_angle(wp.vec3(0.0, 1.0, 0.0), -np.pi / 4.0)
+            )
+
+            builder.add_shape_box(
+                body=-1,
+                cfg=newton.ModelBuilder.ShapeConfig(mu=0.1, density=0.0),
+                xform=left_xform,
+                hx=extents[0],
+                hy=extents[1],
+                hz=extents[2],
+            )
+            builder.add_shape_box(
+                body=-1,
+                cfg=newton.ModelBuilder.ShapeConfig(mu=0.1, density=0.0),
+                xform=right_xform,
+                hx=extents[0],
+                hy=extents[1],
+                hz=extents[2],
+            )
+        elif self.collider == "teaspoon":
+            usd_stage = Usd.Stage.Open(os.path.join(os.path.dirname(__file__), "assets", "teaspoon", "teaspoon.usda"))
+            spoon_mesh = newton.usd.get_mesh(usd_stage.GetPrimAtPath("/root/Tea_Spoon/Tea_Spoon"))
+            self.spoon_z_start = args.spoon_z_start
+            self.spoon_speed = args.spoon_speed
+            self.spoon_body = builder.add_body(
+                xform=wp.transform(wp.vec3(0.0, 0.0, self.spoon_z_start), wp.quat_identity()),
+                label="teaspoon",
+            )
+            s = args.spoon_scale
+            builder.add_shape_mesh(
+                body=self.spoon_body,
+                xform=wp.transform_identity(),
+                mesh=spoon_mesh,
+                scale=(s, s, s),
+                cfg=newton.ModelBuilder.ShapeConfig(mu=0.5, density=0.0),
+            )
+        elif self.collider != "none":
+            if self.collider == "cube":
+                extents = (0.5, 2.0, 0.8)
+                xform = wp.transform(wp.vec3(0.75, 0.0, 0.8), wp.quat_identity())
+            elif self.collider == "wedge":
+                extents = (0.5, 2.0, 0.5)
+                xform = wp.transform(
+                    wp.vec3(0.1, 0.0, 0.5), wp.quat_from_axis_angle(wp.vec3(0.0, 1.0, 0.0), np.pi / 4.0)
+                )
+
+            builder.add_shape_box(
+                body=-1,
+                cfg=newton.ModelBuilder.ShapeConfig(mu=0.1),
+                xform=xform,
+                hx=extents[0],
+                hy=extents[1],
+                hz=extents[2],
+            )
+
+        builder.add_ground_plane(cfg=newton.ModelBuilder.ShapeConfig(mu=0.5))
+
+        self.model = builder.finalize()
+        self.model.set_gravity(args.gravity)
+
+        # Copy all remaining CLI arguments to MPM options or per-particle material custom attributes
+        mpm_options = SolverImplicitMPM.Config()
+        for key in vars(args):
+            if hasattr(mpm_options, key):
+                setattr(mpm_options, key, getattr(args, key))
+
+            if hasattr(self.model.mpm, key):
+                getattr(self.model.mpm, key).fill_(getattr(args, key))
+
+        self.state_0 = self.model.state()
+        self.state_1 = self.model.state()
+
+        # Initialize MPM solver
+        self.solver = SolverImplicitMPM(self.model, mpm_options)
+
+        self.viewer.set_model(self.model)
+
+        if isinstance(self.viewer, newton.viewer.ViewerGL):
+            self.viewer.register_ui_callback(self.render_ui, position="side")
+
+        self.viewer.show_particles = True
+        self.show_normals = False
+        self.show_stress = False
+
+        self.capture()
+
+    def _update_spoon(self):
+        z = float(self.spoon_z_start + self.spoon_speed * self.sim_time)
+        wp.launch(
+            _set_spoon_kinematic,
+            dim=1,
+            inputs=[self.spoon_body, z, float(self.spoon_speed), self.state_0.body_q, self.state_0.body_qd],
+            device=self.model.device,
+        )
+
+    def capture(self):
+        self.graph = None
+        if wp.get_device().is_cuda and self.solver.grid_type == "fixed":
+            if self.sim_substeps % 2 != 0:
+                warnings.warn("Sim substeps must be even for graph capture of MPM step", stacklevel=2)
+            else:
+                with wp.ScopedCapture() as capture:
+                    self.simulate()
+                self.graph = capture.graph
+
+    def simulate(self):
+        for _ in range(self.sim_substeps):
+            if self.collider == "teaspoon":
+                self._update_spoon()
+            self.solver.step(self.state_0, self.state_1, None, None, self.sim_dt)
+            self.solver.project_outside(self.state_1, self.state_1, self.sim_dt)
+            self.state_0, self.state_1 = self.state_1, self.state_0
+
+    def step(self):
+        if self.graph:
+            wp.capture_launch(self.graph)
+        else:
+            self.simulate()
+        self.sim_time += self.frame_dt
+
+    def test_final(self):
+        voxel_size = self.solver.voxel_size
+        newton.examples.test_particle_state(
+            self.state_0,
+            "all particles are above the ground",
+            lambda q, qd: q[2] > -voxel_size,
+        )
+
+        if self.collider == "cube":
+            cube_extents = wp.vec3(0.5, 2.0, 0.8) - wp.vec3(voxel_size)
+            cube_center = wp.vec3(0.75, 0, 0.8)
+            cube_lower = cube_center - cube_extents
+            cube_upper = cube_center + cube_extents
+            newton.examples.test_particle_state(
+                self.state_0,
+                "all particles are outside the cube",
+                lambda q, qd: not newton.math.vec_inside_limits(q, cube_lower, cube_upper),
+            )
+
+        # Test that some particles are still high-enough
+        if self.collider in ("concave", "cube"):
+            max_z = np.max(self.state_0.particle_q.numpy()[:, 2])
+            assert max_z > 0.8, "All particles have collapsed"
+
+    def render(self):
+        self.viewer.begin_frame(self.sim_time)
+        self.viewer.log_state(self.state_0)
+
+        if self.show_normals:
+            # for debugging purposes, we can visualize the collider normals
+            _impulses, pos, _cid = self.solver.collect_collider_impulses(self.state_0)
+            normals = self.state_0.collider_normal_field.dof_values
+
+            normal_vecs = 0.25 * self.solver.voxel_size * normals
+            root = pos
+            mid = pos + normal_vecs
+            tip = mid + normal_vecs
+
+            # draw two segments per normal so we can visualize direction (red roots, orange tips)
+            self.viewer.log_lines(
+                "/normal_roots",
+                starts=root,
+                ends=mid,
+                colors=wp.full(pos.shape[0], value=wp.vec3(0.8, 0.0, 0.0), dtype=wp.vec3),
+            )
+            self.viewer.log_lines(
+                "/normal_tips",
+                starts=mid,
+                ends=tip,
+                colors=wp.full(pos.shape[0], value=wp.vec3(1.0, 0.5, 0.3), dtype=wp.vec3),
+            )
+        else:
+            self.viewer.log_lines("/normal_roots", None, None, None)
+            self.viewer.log_lines("/normal_tips", None, None, None)
+
+        self.viewer.end_frame()
+
+    def render_ui(self, imgui):
+        _changed, self.show_normals = imgui.checkbox("Show Normals", self.show_normals)
+
+    @staticmethod
+    def emit_particles(builder: newton.ModelBuilder, args):
+        density = args.density
+        voxel_size = args.voxel_size
+
+        particles_per_cell = 3
+        particle_lo = np.array(args.emit_lo)
+        particle_hi = np.array(args.emit_hi)
+        particle_res = np.array(
+            np.ceil(particles_per_cell * (particle_hi - particle_lo) / voxel_size),
+            dtype=int,
+        )
+
+        cell_size = (particle_hi - particle_lo) / particle_res
+        cell_volume = np.prod(cell_size)
+
+        radius = np.max(cell_size) * 0.5
+        mass = np.prod(cell_volume) * density
+
+        builder.add_particle_grid(
+            pos=wp.vec3(particle_lo),
+            rot=wp.quat_identity(),
+            vel=wp.vec3(0.0),
+            dim_x=particle_res[0] + 1,
+            dim_y=particle_res[1] + 1,
+            dim_z=particle_res[2] + 1,
+            cell_x=cell_size[0],
+            cell_y=cell_size[1],
+            cell_z=cell_size[2],
+            mass=mass,
+            jitter=2.0 * radius,
+            radius_mean=radius,
+        )
+
+    @staticmethod
+    def create_parser():
+        parser = newton.examples.create_parser()
+
+        # Scene configuration
+        parser.add_argument(
+            "--collider", default="teaspoon", choices=["teaspoon", "cube", "wedge", "concave", "none"], type=str
+        )
+        parser.add_argument("--spoon-scale", type=float, default=5.0)
+        parser.add_argument("--spoon-speed", type=float, default=1.0)
+        parser.add_argument("--spoon-z-start", type=float, default=1.0)
+        parser.add_argument("--emit-lo", type=float, nargs=3, default=[-0.5, -0.5, 1.5])
+        parser.add_argument("--emit-hi", type=float, nargs=3, default=[0.5, 0.5, 3.5])
+        parser.add_argument("--gravity", type=float, nargs=3, default=[0, 0, -10])
+        parser.add_argument("--fps", type=float, default=60.0)
+        parser.add_argument("--substeps", type=int, default=1)
+
+        # Add MPM-specific arguments
+        parser.add_argument("--density", type=float, default=1000.0)
+        parser.add_argument("--air-drag", type=float, default=1.0)
+        parser.add_argument("--critical-fraction", "-cf", type=float, default=0.0)
+
+        parser.add_argument("--young-modulus", "-ym", type=float, default=1.0e15)
+        parser.add_argument("--poisson-ratio", "-nu", type=float, default=0.3)
+        parser.add_argument("--friction", "-mu", type=float, default=0.68)
+        parser.add_argument("--damping", type=float, default=0.0)
+        parser.add_argument("--yield-pressure", "-yp", type=float, default=1.0e12)
+        parser.add_argument("--tensile-yield-ratio", "-tyr", type=float, default=0.0)
+        parser.add_argument("--yield-stress", "-ys", type=float, default=0.0)
+        parser.add_argument("--hardening", type=float, default=0.0)
+        parser.add_argument("--dilatancy", type=float, default=0.0)
+        parser.add_argument("--viscosity", type=float, default=0.0)
+
+        parser.add_argument("--grid-type", "-gt", type=str, default="sparse", choices=["sparse", "fixed", "dense"])
+        parser.add_argument("--grid-padding", "-gp", type=int, default=0)
+        parser.add_argument("--max-active-cell-count", "-mac", type=int, default=-1)
+        parser.add_argument(
+            "--solver",
+            "-s",
+            type=str,
+            default="auto",
+        )
+        parser.add_argument("--transfer-scheme", "-ts", type=str, default="apic", choices=["apic", "pic"])
+        parser.add_argument("--integration-scheme", "-is", type=str, default="pic", choices=["pic", "gimp"])
+
+        parser.add_argument("--strain-basis", "-sb", type=str, default="P0")
+        parser.add_argument("--collider-basis", "-cb", type=str, default="S2")
+        parser.add_argument("--velocity-basis", "-vb", type=str, default="Q1")
+
+        parser.add_argument("--max-iterations", "-it", type=int, default=250)
+        parser.add_argument("--tolerance", "-tol", type=float, default=1.0e-4)
+        parser.add_argument("--voxel-size", "-dx", type=float, default=0.1)
+        return parser
+
+
+if __name__ == "__main__":
+    parser = Example.create_parser()
+
+    # Parse arguments and initialize viewer
+    viewer, args = newton.examples.init(parser)
+
+    # Create example and run
+    example = Example(viewer, args)
+
+    newton.examples.run(example, args)
