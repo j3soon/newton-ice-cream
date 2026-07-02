@@ -21,6 +21,8 @@ source .venv/bin/activate
 uv pip install -e "./newton[examples]"
 ```
 
+For those who run within WSL, we may want to optimize the GPU performance with direct3d rendering by adding prefix `MESA_LOADER_DRIVER_OVERRIDE=d3d12 GALLIUM_DRIVER=d3d12 MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA` in front of python scripts.
+
 ## Run Example
 
 ### Scooping Ice Cream
@@ -28,7 +30,10 @@ uv pip install -e "./newton[examples]"
 ```sh
 source .venv/bin/activate
 python ./example_mpm_ice_cream_spoon.py
+# For better performance, you can increase the voxel size (at the cost of visual fidelity):
 python ./example_mpm_ice_cream_spoon.py --voxel-size 0.005
+# For WSL users, the following command may give better performance with direct3d rendering:
+MESA_LOADER_DRIVER_OVERRIDE=d3d12 GALLIUM_DRIVER=d3d12 MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA python ./example_mpm_ice_cream_spoon.py
 ```
 
 https://github.com/user-attachments/assets/297727db-86d2-40fd-a032-9e24c522e2d2
