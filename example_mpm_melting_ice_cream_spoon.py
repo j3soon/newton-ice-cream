@@ -57,6 +57,7 @@ class Example(SpoonExample):
             self._update_melting_material(t)
             self._update_spoon(t)
             self.solver.step(self.state_0, self.state_1, None, None, self.sim_dt)
+            self.solver.project_outside(self.state_1, self.state_1, self.sim_dt)
             self.state_0, self.state_1 = self.state_1, self.state_0
 
     @staticmethod

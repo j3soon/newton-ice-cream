@@ -30,8 +30,12 @@ For those who run within WSL, we may want to optimize the GPU performance with d
 ```sh
 source .venv/bin/activate
 python ./example_mpm_ice_cream_spoon.py
-# For better performance, you can increase the voxel size (at the cost of visual fidelity):
+# If the command above freezes when using a remote desktop and needs to be killed with `kill <pid>`, try capping the render FPS.
+python ./example_mpm_ice_cream_spoon.py --render-fps 15
+# For better fidelity, you can decrease the voxel size (with more computational cost):
 python ./example_mpm_ice_cream_spoon.py --voxel-size 0.005
+# Melting ice cream
+python ./example_mpm_melting_ice_cream_spoon.py
 # For WSL users, the following command may give better performance with direct3d rendering:
 MESA_LOADER_DRIVER_OVERRIDE=d3d12 GALLIUM_DRIVER=d3d12 MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA python ./example_mpm_ice_cream_spoon.py
 ```
