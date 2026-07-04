@@ -30,10 +30,12 @@ For those who run within WSL, we may want to optimize the GPU performance with d
 ```sh
 source .venv/bin/activate
 python ./example_mpm_ice_cream_spoon.py
-# If the command above freezes when using a remote desktop and needs to be killed with `kill <pid>`, try capping the render FPS.
-python ./example_mpm_ice_cream_spoon.py --render-fps 15
 # For better fidelity, you can decrease the voxel size (with more computational cost):
 python ./example_mpm_ice_cream_spoon.py --voxel-size 0.005
+# If you have a powerful GPU but only have ~5 FPS, it may be due to OpenGL using llvmpipe software rendering. Try the following to force OpenGL to use your GPU:
+__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia python ./example_mpm_ice_cream_spoon.py
+# If the command above freezes when using a remote desktop and needs to be killed with `kill <pid>`, try capping the render FPS.
+python ./example_mpm_ice_cream_spoon.py --render-fps 15
 # Melting ice cream
 python ./example_mpm_melting_ice_cream_spoon.py
 # For WSL users, the following command may give better performance with direct3d rendering:
